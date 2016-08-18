@@ -1,148 +1,30 @@
-tosca_definitions_version: cloudify_dsl_1_3
-
-imports:
-  - http://www.getcloudify.org/spec/cloudify/3.4/types.yaml
-  - http://www.getcloudify.org/spec/diamond-plugin/1.3.3/plugin.yaml
-  - http://www.getcloudify.org/spec/openstack-plugin/1.4/plugin.yaml
-  - http://www.getcloudify.org/spec/vsphere-plugin/2.0/plugin.yaml
-  - scale.yaml
-
 inputs:
   docRoot:
+    type: string
     default: /var/www/html
   dbPort:
+    type: integer
     default: 3306
   memcachePort:
+    type: integer
     default: 11211
-  agent_user:
-    default: 'ubuntu'
-# Ubuntu 14.04
-  vm_image:
-    default: '05bb3a46-ca32-4032-bedd-8d7ebd5c8100'
-# RAM: 4096 MB, Hard Disk 80 GB, 2 vCPUs
-  vm_flavor:
-    default: 3
-  vsphere_template_name:
-    default: 'Ubuntu_server_14_04_tmpl'
-  management_network:
-    default: 'cfy_mng'
-  external_network:
-    default: 'External'
-  default_security_group_name:
-    default: 'default'
-
+  drupal_schema_url:
+    type: string
+    default: http://repository.cloudifysource.org/org/cloudifysource/examples/drupal/new_babies7.zip
+  drupal_image_url:
+    type: string
+    default: http://repository.cloudifysource.org/org/cloudifysource/examples/drupal/babies_image_d7_v2.zip
+  drupal_db_name:
+    type: string
+    default: mydrupaldb
+  drupal_db_user:
+    type: string
+    default: admin
+  drupal_db_password:
+    type: integer
+    default: 123
 
 node_types:
-
-  ###########################################################
-  # We define a type that inherits openstack's default
-  # server, and adds monitoring capabillities on top of it.
-  ###########################################################
-
-  host:
-    derived_from: cloudify.openstack.nodes.Server
-    properties:
-      cloudify_agent:
-        default:
-          user: { get_input: agent_user }
-      server:
-        default:
-          image: { get_input: vm_image }
-          flavor: { get_input: vm_flavor }
-    interfaces:
-      utils.ops:
-        restart_vm_op: utils-scripts/restart_vm.sh
-      ###########################################################
-      # We are infact telling cloudify to install a diamond
-      # monitoring agent on the server.
-      #
-      # (see https://github.com/BrightcoveOS/Diamond)
-      ###########################################################
-      cloudify.interfaces.monitoring_agent:
-          install:
-            implementation: diamond.diamond_agent.tasks.install
-            inputs:
-              diamond_config:
-                default:
-                  interval: 1
-          start: diamond.diamond_agent.tasks.start
-          stop: diamond.diamond_agent.tasks.stop
-          uninstall: diamond.diamond_agent.tasks.uninstall
-      ###########################################################
-      # Adding some collectors. These collectors are necessary
-      # for the Cloudify UI to display the deafult metrics.
-      ###########################################################
-      cloudify.interfaces.monitoring:
-          start:
-            implementation: diamond.diamond_agent.tasks.add_collectors
-            inputs:
-              collectors_config:
-                default:
-                  CPUCollector: {}
-                  MemoryCollector: {}
-                  LoadAverageCollector: {}
-                  DiskUsageCollector:
-                    config:
-                      devices: x?vd[a-z]+[0-9]*$
-                  NetworkCollector: {}
-
-  vsphere_host:
-    derived_from: cloudify.vsphere.nodes.Server
-    properties:
-      cloudify_agent:
-        default:
-          user: { get_input: agent_user }
-      server:
-        default:
-          template: { get_input: vsphere_template_name }
-          cpus: 1
-          memory: 2048
-      networking:
-        default:
-          connect_networks:
-            - name: { get_input: management_network }
-              switch_distributed: True
-              management: True
-            - name: { get_input: external_network }
-              switch_distributed: True
-              external: True
-    interfaces:
-      utils.ops:
-        restart_vm_op: utils-scripts/restart_vm.sh
-      ###########################################################
-      # We are infact telling cloudify to install a diamond
-      # monitoring agent on the server.
-      #
-      # (see https://github.com/BrightcoveOS/Diamond)
-      ###########################################################
-      cloudify.interfaces.monitoring_agent:
-          install:
-            implementation: diamond.diamond_agent.tasks.install
-            inputs:
-              diamond_config:
-                default:
-                  interval: 1
-          start: diamond.diamond_agent.tasks.start
-          stop: diamond.diamond_agent.tasks.stop
-          uninstall: diamond.diamond_agent.tasks.uninstall
-      ###########################################################
-      # Adding some collectors. These collectors are necessary
-      # for the Cloudify UI to display the deafult metrics.
-      ###########################################################
-      cloudify.interfaces.monitoring:
-          start:
-            implementation: diamond.diamond_agent.tasks.add_collectors
-            inputs:
-              collectors_config:
-                default:
-                  CPUCollector: {}
-                  MemoryCollector: {}
-                  LoadAverageCollector: {}
-                  DiskUsageCollector:
-                    config:
-                      devices: x?vd[a-z]+[0-9]*$
-                  NetworkCollector: {}
-
   mysql_dbms:
     derived_from: cloudify.nodes.DBMS
     properties:
@@ -158,6 +40,11 @@ node_types:
       newValues:
         description: A command separated list of my.cnf values for the above variable names
         type: string
+    interfaces:
+      cloudify.interfaces.lifecycle:
+        create: mysql-scripts/install-mysql.sh
+        start: mysql-scripts/start-mysql.sh
+        stop: mysql-scripts/stop-mysql.sh
 
   mysql_schema:
     derived_from: cloudify.nodes.ApplicationModule
@@ -171,6 +58,9 @@ node_types:
       query:
         description: Test Query
         type: string
+    interfaces:
+      cloudify.interfaces.lifecycle:
+        configure: mysql-scripts/configure-mysql-schema.sh
 
   memcached_db_server:
     derived_from: cloudify.nodes.DBMS
@@ -178,6 +68,10 @@ node_types:
       port:
         description: Memcached port
         type: integer
+    interfaces:
+      cloudify.interfaces.lifecycle:
+        create: memcached-scripts/install-memcached.sh
+        configure: memcached-scripts/configure-memcached.sh
 
   memcached_application:
     derived_from: cloudify.nodes.ApplicationModule
@@ -216,6 +110,9 @@ node_types:
       docRoot:
         description: docRoot of the Apache
         type: string
+    interfaces:
+      cloudify.interfaces.lifecycle:
+        create: apache-scripts/install-apache.sh
 
   drupal_application:
     derived_from: cloudify.nodes.ApplicationModule
@@ -238,6 +135,13 @@ node_types:
       docRoot:
         description: docRoot of the Drupal
         type: string
+    interfaces:
+      cloudify.interfaces.lifecycle:
+        start: apache-scripts/start-apache.sh
+        stop: apache-scripts/stop-apache.sh
+      drupal.interfaces.action:
+        install_project: drupal-scripts/drush-install.sh
+        set_variable: drupal-scripts/drush-setvar.sh
 
 relationships:
   drupal_server_connected_to_mysql_database:
@@ -258,66 +162,6 @@ relationships:
         establish: drupal-scripts/configure-memcached-drupal.sh
 
 node_templates:
-
-  drupal_security_group:
-    type: cloudify.openstack.nodes.SecurityGroup
-    properties:
-      rules:
-        - remote_ip_prefix: 0.0.0.0/0
-          port: 22
-        - remote_ip_prefix: 0.0.0.0/0
-          port: 8080
-        - remote_ip_prefix: 0.0.0.0/0
-          port: 8000
-        - remote_ip_prefix: 0.0.0.0/0
-          port: 8081
-        - remote_ip_prefix: 0.0.0.0/0
-          port: 80
-        - remote_ip_prefix: 0.0.0.0/0
-          port: 3306
-        - remote_ip_prefix: 0.0.0.0/0
-          port: 55672
-        - remote_ip_prefix: 0.0.0.0/0
-          port: 5672
-        - remote_ip_prefix: 0.0.0.0/0
-          port: 53229
-        - remote_ip_prefix: 0.0.0.0/0
-          port: 8101
-        - remote_ip_prefix: 0.0.0.0/0
-          port: 8100
-
-  apache_ip:
-    type: cloudify.openstack.nodes.FloatingIP
-    capabilities:
-      scalable:
-        properties:
-          default_instances: 1
-
-  mysql_vm:
-    type: host
-    instances:
-      deploy: 1
-    relationships:
-      - target: drupal_security_group
-        type: cloudify.openstack.server_connected_to_security_group
-
-  memcached-vm:
-    type: vsphere_host
-    instances:
-      deploy: 1
-
-  apache_vm:
-    type: host
-    capabilities:
-      scalable:
-        properties:
-          default_instances: 1
-    relationships:
-      - target: drupal_security_group
-        type: cloudify.openstack.server_connected_to_security_group
-      - target: apache_ip
-        type: cloudify.openstack.server_connected_to_floating_ip
-
   mysql_database:
     type: mysql_dbms
     properties:
@@ -325,11 +169,6 @@ node_templates:
       sectionNames: mysqld
       variableNames: bind-address
       newValues: 0.0.0.0
-    interfaces:
-      cloudify.interfaces.lifecycle:
-        create: mysql-scripts/install-mysql.sh
-        start: mysql-scripts/start-mysql.sh
-        stop: mysql-scripts/stop-mysql.sh
     relationships:
       - target: mysql_vm
         type: cloudify.relationships.contained_in
@@ -339,10 +178,8 @@ node_templates:
     properties:
       port: { get_input: dbPort }
       query: select name,mail from users
-      schemaurl: http://repository.cloudifysource.org/org/cloudifysource/examples/drupal/new_babies7.zip
+      schemaurl: { get_input: drupal_schema_url }
     interfaces:
-      cloudify.interfaces.lifecycle:
-        configure: mysql-scripts/configure-mysql-schema.sh
       cloudify.interfaces.monitoring:
          start:
             implementation: diamond.diamond_agent.tasks.add_collectors
@@ -351,7 +188,7 @@ node_templates:
                   MySQLCollector:
                      config:
                         enabled: True
-                        hosts: "admin:123@localhost:3306/mydrupaldb"
+                        hosts: { concat: [ { get_input: drupal_db_user }, ":", { get_input: drupal_db_password }, "@localhost:", { get_input: dbPort }, "/", { get_input: drupal_db_name} ]}
     relationships:
       - target: mysql_database
         type: cloudify.relationships.contained_in
@@ -360,10 +197,6 @@ node_templates:
     type: memcached_db_server
     properties:
       port: { get_input: memcachePort }
-    interfaces:
-      cloudify.interfaces.lifecycle:
-        create: memcached-scripts/install-memcached.sh
-        configure: memcached-scripts/configure-memcached.sh
     relationships:
       - target: memcached-vm
         type: cloudify.relationships.contained_in
@@ -376,7 +209,7 @@ node_templates:
     interfaces:
       cloudify.interfaces.lifecycle:
         start: memcached-scripts/start-memcached.sh
-        stop: memcached-scripts/stop-memcached.sh  
+        stop: memcached-scripts/stop-memcached.sh
     relationships:
       - target: memcached_server
         type: cloudify.relationships.contained_in
@@ -392,9 +225,6 @@ node_templates:
       drupalVersion: 7
       newPort: 80
       docRoot: { get_input: docRoot }
-    interfaces:
-      cloudify.interfaces.lifecycle:
-        create: apache-scripts/install-apache.sh
     relationships:
       - type: cloudify.relationships.contained_in
         target: apache_vm
@@ -405,19 +235,11 @@ node_templates:
     type: drupal_application
     properties:
       docRoot: { get_input: docRoot }
-      drupalImageURL: http://repository.cloudifysource.org/org/cloudifysource/examples/drupal/babies_image_d7_v2.zip
+      drupalImageURL: { get_input: drupal_image_url }
       app_name: My drupal web server
-      dbName: mydrupaldb
-      dbUserName: admin
-      dbUserPassword: 123  
-    interfaces:
-      cloudify.interfaces.lifecycle:        
-        start: apache-scripts/start-apache.sh
-        stop: apache-scripts/stop-apache.sh
-      drupal.interfaces.action:
-        install_project: drupal-scripts/drush-install.sh
-        set_variable: drupal-scripts/drush-setvar.sh
-
+      dbName: { get_input: drupal_db_name }
+      dbUserName: { get_input: drupal_db_user }
+      dbUserPassword: { get_input: drupal_db_password }
     relationships:
       - type: cloudify.relationships.contained_in
         target: drupal_server
@@ -425,7 +247,6 @@ node_templates:
         target: memcached_app
       - type: drupal_app_connected_to_mysql_drupal_schema
         target: mysql_drupal_schema
-
 
 plugins:
    drush-plugin:
@@ -435,7 +256,6 @@ plugins:
    utils-plugin:
       executor: central_deployment_agent
       source: utils-plugin
-
 
 workflows:
    restart_vms:
@@ -454,7 +274,7 @@ workflows:
       mapping: drush-plugin.drush.tasks.install_project
       parameters:
          project_name: {}
-   
+
    # See Built-in Workflows in http://getcloudify.org/guide/3.3.1/guide-workflows.html#built-in-workflows
 #   drushinstall:
 #      mapping: default_workflows.cloudify.plugins.workflows.execute_operation
@@ -473,7 +293,7 @@ workflows:
 # Syntax without parameters
 # drush_dl: drush-plugin.drush.tasks.drush_download_module
 # drush_en: drush-plugin.drush.tasks.drush_enable_module
-  
+
 outputs:
   endpoint:
     description: My application endpoint
@@ -558,8 +378,34 @@ groups:
 
 
 policies:
-  scale_policy1:
+  scale_policy:
     type: cloudify.policies.scaling
     properties:
       default_instances: 1
     targets: [apache]
+
+policy_types:
+  scale_policy_type:
+    source: policies/scale.clj
+    properties:
+      default_instances:
+        default: true
+      policy_operates_on_group:
+        default: true
+      service_selector:
+        description: regular expression that selects the metric to be measured
+        default: ".*"
+      moving_window_size:
+        description: the moving window for individual sources in secs
+        default: 10
+      scale_threshold:
+        description: the value to trigger scaling over aggregrated moving values
+      scale_limit:
+        description: scaling limit
+        default: 10
+      scale_direction:
+        description: scale up ('<') or scale down ('>')
+        default: '<'
+      cooldown_time:
+        description: the time to wait before evaluating again after a scale
+        default: 60
